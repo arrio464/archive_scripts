@@ -8,6 +8,8 @@ import traceback
 
 from pathspec import PathSpec
 
+VERSION: int = 1
+
 
 def load_ignore_rules(directory) -> PathSpec:
     if os.path.isfile(os.path.join(directory, ".gitignore")):
@@ -25,72 +27,49 @@ def get_non_ignored_files(base_path) -> list[str]:
 
 def calculate_checksum(file_path) -> str:
     checksum = hashlib.sha256(open(file_path, "rb").read()).hexdigest()
-    return checksum[:8]
+    return checksum
 
 
-if __name__ == "__main__":
-    import argparse
+def calculate_files_checksum(files: list[str]) -> dict:
+    checksums = {}
+    for file in files:
+        checksums[file] = calculate_checksum(file)
+    return checksums
 
-    parser = argparse.ArgumentParser(description="Compression script calls 7z cli")
-    parser.add_argument("-i", "--input", help="Directory to compress", required=True)
-    parser.add_argument("-o", "--output", help="Output directory", default=os.getcwd())
-    parser.add_argument("--dry-run", action="store_true", help="Perform a dry run")
 
-    args = parser.parse_args()
-
-    if not os.path.isdir(args.input):
-        raise ValueError(f"'{args.input}' is not a valid directory.")
-
-    if not os.path.isdir(args.output):
-        raise ValueError(f"'{args.output}' is not a valid directory.")
-
-    input_dir = os.path.abspath(args.input)
-    output_dir = os.path.abspath(args.output)
-
-    if args.dry_run:
-        print("This is a dry run. No compression will be performed.")
-        print(f"Input directory: {input_dir}")
-        print(f"Output directory: {output_dir}")
-        print("Files to be compressed:")
-        files = get_non_ignored_files(input_dir)
-        for file in files:
-            print(file)
-        sys.exit(0)
-
+def compress_files(source: str, output: str) -> None:
     try:
-        print(f"Compressing '{input_dir}'...")
+        print(f"Compressing '{source}'...")
         temp_archive_path = os.path.join(
-            os.path.abspath(args.output),
-            f"{os.path.basename(input_dir)}_{time.strftime("%Y%m%d%H%M%S%z")}.tmp",
+            output,
+            f"{os.path.basename(source)}_{time.strftime("%Y%m%d%H%M%S%z")}.tmp",
         )
 
         # On Windows, commands that are too long may cause WinError 206
         # So we use -i@file instead
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            os.chdir(input_dir)  # 7z doesn't support relative paths
-            temp_file.write("\n".join(get_non_ignored_files(input_dir)).encode("utf-8"))
+            os.chdir(source)  # 7z doesn't support relative paths
+            temp_file.write("\n".join(get_non_ignored_files(source)).encode("utf-8"))
             temp_file.close()
             compress_command = [
                 "7z",
                 "a",
                 temp_archive_path,
                 "-m0=lzma2",
-                "-mx=7",  # compression level
+                "-mx=9",  # compression level
                 "-mmt=on",  # multi-threading
                 "-ms=on",  # solid archive
                 "-i@" + temp_file.name,
             ]
             subprocess.run(compress_command, check=True)
 
-        checksum = calculate_checksum(temp_archive_path)
+        checksum = calculate_checksum(temp_archive_path)[:8]
         output_archive_path = os.path.join(
-            os.path.abspath(args.output),
+            output,
             temp_archive_path.replace(".tmp", f"_{checksum}.7z"),
         )
         os.rename(temp_archive_path, output_archive_path)
-        print(
-            f"Folder '{input_dir}' compressed successfully to '{output_archive_path}'."
-        )
+        print(f"Folder '{source}' compressed successfully to '{output_archive_path}'.")
     except subprocess.CalledProcessError as e:
         print(f"Error during compression: {e}", file=sys.stderr)
         traceback.print_exc()
@@ -100,3 +79,38 @@ if __name__ == "__main__":
     finally:
         if os.path.isfile(temp_archive_path):
             os.remove(temp_archive_path)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Compression script calls 7z cli")
+    parser.add_argument("-i", "--input", help="Folder to compress", required=True)
+    parser.add_argument("-o", "--output", help="Output directory", default=os.getcwd())
+    parser.add_argument("--dry-run", action="store_true", help="Perform a dry run")
+
+    print("Script version: {}".format(VERSION))
+
+    args = parser.parse_args()
+
+    if not os.path.isdir(args.input):
+        raise ValueError(f"'{args.input}' is not a valid directory.")
+
+    if not os.path.isdir(args.output):
+        raise ValueError(f"'{args.output}' is not a valid directory.")
+
+    source_directory = os.path.abspath(args.input)
+    output_directory = os.path.abspath(args.output)
+
+    if args.dry_run:
+        print("This is a dry run. No compression will be performed.")
+        print(f"Folder to compress: {source_directory}")
+        print(f"Output directory: {output_directory}")
+        print("Getting files to be compress...")
+        files = get_non_ignored_files(source_directory)
+        print("Files to be compress:")
+        for file in files:
+            print(file)
+        sys.exit(0)
+
+    compress_files(source_directory, output_directory)
