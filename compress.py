@@ -37,7 +37,7 @@ def calculate_files_checksum(files: list[str]) -> dict:
     return checksums
 
 
-def compress_files(source: str, output: str) -> None:
+def compress_files(source: str, output: str) -> str:
     try:
         print(f"Compressing '{source}'...")
         temp_archive_path = os.path.join(
@@ -48,7 +48,6 @@ def compress_files(source: str, output: str) -> None:
         # On Windows, commands that are too long may cause WinError 206
         # So we use -i@file instead
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            os.chdir(source)  # 7z doesn't support relative paths
             temp_file.write("\n".join(get_non_ignored_files(source)).encode("utf-8"))
             temp_file.close()
             compress_command = [
@@ -61,7 +60,7 @@ def compress_files(source: str, output: str) -> None:
                 "-ms=on",  # solid archive
                 "-i@" + temp_file.name,
             ]
-            subprocess.run(compress_command, check=True)
+            subprocess.run(compress_command, check=True, cwd=source)
 
         checksum = calculate_checksum(temp_archive_path)[:8]
         output_archive_path = os.path.join(
@@ -70,6 +69,7 @@ def compress_files(source: str, output: str) -> None:
         )
         os.rename(temp_archive_path, output_archive_path)
         print(f"Folder '{source}' compressed successfully to '{output_archive_path}'.")
+        return output_archive_path
     except subprocess.CalledProcessError as e:
         print(f"Error during compression: {e}", file=sys.stderr)
         traceback.print_exc()
