@@ -18,38 +18,48 @@ PATCH_VERSION = 0
 VERSION = f"{MAJOR_VERSION}.{MINOR_VERSION}.{PATCH_VERSION}"
 
 
-def load_gitignore_rules(ignore_file: Path) -> PathSpec:
+def load_gitignore_rules(ignore_file: str) -> PathSpec:
     """Load ignore rules from a single .gitignore file."""
-    if not ignore_file.exists():
+    if not os.path.exists(ignore_file):
         return PathSpec.from_lines("gitwildmatch", [])
 
-    with ignore_file.open("r") as f:
-        rules = [line.strip() for line in f.readlines() if line.strip()]
-    return PathSpec.from_lines("gitwildmatch", rules)
+    with open(ignore_file, "r") as f:
+        return PathSpec.from_lines("gitwildmatch", f.readlines())
 
 
 def get_non_ignored_files(base_path: Path, ignore_filename: str) -> list[str]:
     """Get non-ignored files by processing each subdirectory with its own ignore rules."""
+    # Use string paths for performance, as Path objects are slow
+    base_path_str = str(base_path)
+
     # Build a mapping of directory -> ignore rules
     dir_to_spec = {}
-    for ignore_file in base_path.rglob(ignore_filename):
-        dir_to_spec[ignore_file.parent] = load_gitignore_rules(ignore_file)
+    for root, dirs, files in os.walk(base_path_str):
+        ignore_file = os.path.join(root, ignore_filename)
+        if os.path.exists(ignore_file):
+            dir_to_spec[root] = load_gitignore_rules(ignore_file)
 
     # Recursive traversal with merged ignore rules
-    def is_ignored(path: Path) -> bool:
-        # Traverse up the directory tree and check each applicable `.gitignore`
-        for parent in path.parents:
-            if parent in dir_to_spec:
-                rel_path = path.relative_to(parent)
-                if dir_to_spec[parent].match_file(str(rel_path)):
+    def is_ignored(path: str) -> bool:
+        """Check if a file is ignored using cached rules."""
+        current_dir = os.path.dirname(path)
+        while current_dir >= base_path_str:
+            if current_dir in dir_to_spec:
+                rel_path = os.path.relpath(path, current_dir)
+                if dir_to_spec[current_dir].match_file(rel_path):
                     return True
+            current_dir = os.path.dirname(current_dir)
         return False
 
     # Collect non-ignored files
     all_files = []
-    for path in base_path.rglob("*"):
-        if path.is_file() and not is_ignored(path):
-            all_files.append(str(path.relative_to(base_path)))
+    for root, _, files in os.walk(base_path_str):
+        for file in files:
+            full_path = os.path.join(root, file)
+            if file == ignore_filename or not is_ignored(full_path):
+                rel_path = os.path.relpath(full_path, base_path_str)
+                all_files.append(rel_path)
+
     return all_files
 
 
